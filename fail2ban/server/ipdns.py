@@ -304,9 +304,11 @@ class IPAddr(object):
 	"""
 
 	IP_4_RE = r"""(?:\d{1,3}\.){3}\d{1,3}"""
-	IP_6_RE = r"""(?:[0-9a-fA-F]{1,4}::?|::){1,7}(?:[0-9a-fA-F]{1,4}|(?<=:):)"""
+	IP_6_RE = r"""(?:[0-9a-fA-F]{1,4}::?|:){1,7}(?:[0-9a-fA-F]{1,4}|(?<=:):)"""
 	IP_4_6_CRE = re.compile(
 	  r"""^(?:(?P<IPv4>%s)|\[?(?P<IPv6>%s)\]?)$""" % (IP_4_RE, IP_6_RE))
+	IP_W_CIDR_CRE = re.compile(
+	  r"""^(%s|%s)/(?:(\d+)|(%s|%s))$""" % (IP_4_RE, IP_6_RE, IP_4_RE, IP_6_RE))
 	# An IPv4 compatible IPv6 to be reused (see below)
 	IP6_4COMPAT = None
 
@@ -360,13 +362,17 @@ class IPAddr(object):
 		# test mask:
 		if "/" not in ipstr:
 			return ipstr, IPAddr.CIDR_UNSPEC
-		s = ipstr.split('/', 1)
-		# IP address without CIDR mask
-		if len(s) > 2:
-			raise ValueError("invalid ipstr %r, too many plen representation" % (ipstr,))
-		if "." in s[1] or ":" in s[1]: # 255.255.255.0 resp. ffff:: style mask
-			s[1] = IPAddr.masktoplen(s[1])
-		s[1] = long(s[1])
+		s = IPAddr.IP_W_CIDR_CRE.match(ipstr)
+		if s is None:
+			return ipstr, IPAddr.CIDR_UNSPEC
+		s = list(s.groups())
+		if s[2]: # 255.255.255.0 resp. ffff:: style mask
+			s[1] = IPAddr.masktoplen(s[2])
+		del s[2]
+		try:
+			s[1] = int(s[1])
+		except ValueError:
+			return ipstr, IPAddr.CIDR_UNSPEC
 		return s
 		
 	def __init(self, ipstr, cidr=CIDR_UNSPEC):
@@ -400,7 +406,7 @@ class IPAddr(object):
 
 				# mask out host portion if prefix length is supplied
 				if cidr is not None and cidr >= 0:
-					mask = ~(0xFFFFFFFFL >> cidr)
+					mask = ~(0xFFFFFFFF >> cidr)
 					self._addr &= mask
 					self._plen = cidr
 
@@ -412,13 +418,13 @@ class IPAddr(object):
 
 				# mask out host portion if prefix length is supplied
 				if cidr is not None and cidr >= 0:
-					mask = ~(0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFL >> cidr)
+					mask = ~(0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF >> cidr)
 					self._addr &= mask
 					self._plen = cidr
 
 				# if IPv6 address is a IPv4-compatible, make instance a IPv4
 				elif self.isInNet(IPAddr.IP6_4COMPAT):
-					self._addr = lo & 0xFFFFFFFFL
+					self._addr = lo & 0xFFFFFFFF
 					self._family = socket.AF_INET
 					self._plen = 32
 		else:
@@ -428,7 +434,7 @@ class IPAddr(object):
 		return repr(self.ntoa)
 
 	def __str__(self):
-		return self.ntoa if isinstance(self.ntoa, basestring) else str(self.ntoa)
+		return self.ntoa if isinstance(self.ntoa, str) else str(self.ntoa)
 
 	def __reduce__(self):
 		"""IPAddr pickle-handler, that simply wraps IPAddr to the str
@@ -542,7 +548,7 @@ class IPAddr(object):
 		elif self.isIPv6:
 			# convert network to host byte order
 			hi = self._addr >> 64
-			lo = self._addr & 0xFFFFFFFFFFFFFFFFL
+			lo = self._addr & 0xFFFFFFFFFFFFFFFF
 			binary = struct.pack("!QQ", hi, lo)
 			if self._plen and self._plen < 128:
 				add = "/%d" % self._plen
@@ -600,9 +606,9 @@ class IPAddr(object):
 		if self.family != net.family:
 			return False
 		if self.isIPv4:
-			mask = ~(0xFFFFFFFFL >> net.plen)
+			mask = ~(0xFFFFFFFF >> net.plen)
 		elif self.isIPv6:
-			mask = ~(0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFL >> net.plen)
+			mask = ~(0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF >> net.plen)
 		else:
 			return False
 		
@@ -622,7 +628,7 @@ class IPAddr(object):
 		m4 = (1 << 32)-1
 		mmap = {m6: 128, m4: 32, 0: 0}
 		m = 0
-		for i in xrange(0, 128):
+		for i in range(0, 128):
 			m |= 1 << i
 			if i < 32:
 				mmap[m ^ m4] = 32-1-i
@@ -658,7 +664,7 @@ class IPAddr(object):
 		if not match:
 			return None
 		ipstr = match.group('IPv4')
-		if ipstr != '':
+		if ipstr is not None and ipstr != '':
 			return ipstr
 		return match.group('IPv6')
 
